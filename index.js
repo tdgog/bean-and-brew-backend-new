@@ -12,10 +12,11 @@ const PORT = 8000;
 
 mongoose.set('strictQuery', false);
 await mongoose.connect('mongodb://localhost:27017/bean-and-brew')
-const userModel = mongoose.model('user', new mongoose.Schema({
+const userModel = mongoose.model('users', new mongoose.Schema({
     id: mongoose.Schema.ObjectId,
     email: String,
     hash: String,
+    salt: String,
     token: {
         token: String,
         expiry: Date
@@ -38,21 +39,41 @@ async function generateToken(userId) {
     return [hashedToken, futureDate]
 }
 
+router.post('/getsalt', jsonParser, async (req, res) => {
+    const { email } = req.body;
+
+    userModel.findOne({ email: email }, async function(err, user) {
+        if(user) {
+            res.json({ salt: user.get('salt') })
+        } else {
+            res.json({ salt: null })
+        }
+    })
+})
+
 router.post('/login', jsonParser, async (req, res) => {
     const { email, hash } = req.body;
     console.log(email, hash);
 
     if(await isUnique(email)) return;
 
+    userModel.countDocuments({ email: email, hash: hash }, function(err, count) {
+        console.log(count);
+    });
+
     userModel.findOne({ email: email, hash: hash }, async function(err, user) {
-        console.log(err, user);
+        if(user === null) {
+            res.json({ success: false });
+            return;
+        }
+
         const userId = user.get('_id');
         const [hashedToken, futureDate] = await generateToken(userId);
         await userModel.findByIdAndUpdate(userId, { token: { token: hashedToken, expiry: futureDate } });
 
         res.json({ success: true, token: hashedToken, expiry: futureDate });
+        res.end();
     });
-    res.json({ success: false });
 })
 
 function isUnique(email) {
@@ -69,7 +90,7 @@ router.post('/isUnique', jsonParser, async (req, res) => {
 })
 
 router.post('/addUser', jsonParser, async (req, res) => {
-    const { email, hash } = req.body;
+    const { email, hash, salt } = req.body;
 
     if(!(await isUnique(email))) return;
 
@@ -79,6 +100,7 @@ router.post('/addUser', jsonParser, async (req, res) => {
         _id: userId,
         email: email,
         hash: hash,
+        salt: salt,
         token: {
             token: hashedToken,
             expiry: futureDate
